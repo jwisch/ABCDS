@@ -1,0 +1,229 @@
+library("ggplot2")
+library("gridExtra")
+library("grid")
+library("tidyr")
+library("ggpubr")
+library("magrittr")
+library("sandwich")
+library("lmtest")
+library("tableone")
+library("multcomp")
+library("lmSupport")
+library(yhat)
+library(emmeans)
+#setwd("/Users/AnnaBoerwinkle/Documents/AncesLab/ABCDS")
+
+FILEPATH_DATA<-"C:/Users/julie.wisch/Documents/ABCDS/InProgress_ABCDSAnalysis/Data/"
+RawData <- read.csv(paste(FILEPATH_DATA, "NCDSMC_Data.csv", sep = ""))
+RawData$Group <- factor(RawData$Group, levels=c("NC", "DS", "MC"))
+RawData$CogGroup <- factor(RawData$CogGroup, levels=c("NC", "aDS", "sDS", "aMC", "sMC"))
+RawData$APOE <- factor(RawData$APOE, levels = c(0, 1))
+AllData <- RawData[,2:21]
+
+#Adding in Race
+Race<-read.csv(paste(FILEPATH_DATA, "ABCDS_Race.csv", sep = ""))
+Race$race<-as.factor(Race$race)
+levels(Race$race)<-c("White", "Nonwhite", "Nonwhite", "Nonwhite")
+#Sex: Male = 1, female = 2, -1 = unknown, -2 = subj refused, -3 = NA
+#Race: 1 = white, 2 - black, 3= amer indian, 4 = asian, 5 = PI, 6 = more than one, 7 = missing
+AllData<-merge(AllData, Race[,c("study_id", "race")], by.x = "Subj", by.y = "study_id", all.x = TRUE, all.y = FALSE)
+DIANRace<-read.csv(paste(FILEPATH_DATA, "DIAN_race_17Jan2020.csv", sep = ""))
+#Race: 1 = White, 2 = black, 3 = Amer indian, 4 = PI, 5 = Asian, 50 = Other, 99 = unknown
+DIANRace$RACE<-as.factor(DIANRace$RACE)
+levels(DIANRace$RACE)<-c("Minus4", "White", "Nonwhite", "Nonwhite", "Nonwhite", "Nonwhite", "Nonwhite", "Unknown")
+AllData<-merge(AllData, DIANRace[,c("newid13", "RACE")], by.x = "Subj", by.y = "newid13", all.x = TRUE, all.y = FALSE)
+rm(DIANRace, Race)
+
+#Cleaning this up since there are multiple entries per DIAN person
+#If someone has a minus4 and a something else, keeping the something else
+AllData<-AllData[!duplicated(AllData),]
+AllData<-AllData[with(AllData, order(Subj, RACE)),]
+AllData<-ddply(AllData,.(Subj), tail,1)
+AllData$race<-paste(AllData$race, AllData$RACE, sep = "")
+AllData$race<-gsub("NA", "", AllData$race)
+AllData<-AllData[,-length(AllData)]
+
+
+#For sex, 1 = male and 0 = female
+listVars<-c("Gender", "APOE", "Age", "race", "EYO", "CDRglob", "CogGroup", "AB40", "AB42", "tTau", "pTau", "ABratio", "tauAB42", 
+            "ptauAB42", "SNAP25", "VILIP1", "YKL40", "logLot1NfL")
+catVars<-c("Gender", "APOE", "race", "CDRglob", "CogGroup")
+CreateTableOne(vars = listVars, data = AllData, factorVars = catVars, strata = "CogGroup")
+CreateTableOne(vars = listVars, data = AllData, factorVars = catVars, strata = "Group")
+
+AllData$APOE<-as.numeric(as.character(AllData$APOE))
+
+
+#Can't do tukey test on race because DS group is all white
+
+
+listVars<-c("Gender", "APOE", "Age", "EYO", "CDRglob", "AB40", "AB42", "tTau", "pTau", "ABratio", "tauAB42", 
+            "ptauAB42", "SNAP25", "VILIP1", "YKL40", "logLot1NfL")
+Tukeylist<-list()
+for(i in 1:length(listVars)){
+av <- aov(lm(AllData[,listVars[i]] ~ Group, data = AllData))
+hold<-TukeyHSD(av)$Group
+hold<-data.frame(cbind(row.names(data.frame(hold)), hold))
+colnames(hold)[1]<-"Comparison"
+hold$Param<-(listVars[i])
+Tukeylist[[i]]<-hold
+}
+
+TukeyResult<-do.call(rbind, Tukeylist)
+write.csv(TukeyResult, paste(FILEPATH_DATA, "DemmographicsTukey.csv", sep = ""))
+
+
+AllData$race<-relevel(as.factor(AllData$race), ref = "White") #White is reference level
+AllData$Gender<-relevel(as.factor(AllData$Gender), ref = 1) #Male is reference level
+AllData$Group<-relevel(AllData$Group, ref = "NC") #Healthy controls is reference level
+AllData$APOE<-relevel(as.factor(as.character(AllData$APOE)), ref = "0")
+
+
+model1<-lm(AB40 ~ Group*EYO + APOE*EYO + Gender*EYO + Group*APOE + Group*Gender + APOE*Gender, data = AllData)
+model2<-lm(AB42 ~ Group*EYO + APOE*EYO + Gender*EYO + Group*APOE + Group*Gender + APOE*Gender, data = AllData)
+model3<-lm(tTau ~ Group*EYO + APOE*EYO + Gender*EYO + Group*APOE + Group*Gender + APOE*Gender, data = AllData)
+model4<-lm(pTau ~ Group*EYO + APOE*EYO + Gender*EYO + Group*APOE + Group*Gender + APOE*Gender, data = AllData)
+model5<-lm(ABratio ~ Group*EYO + APOE*EYO + Gender*EYO + Group*APOE + Group*Gender + APOE*Gender, data = AllData)
+model6<-lm(tauAB42 ~ Group*EYO + APOE*EYO + Gender*EYO + Group*APOE + Group*Gender + APOE*Gender, data = AllData)
+model7<-lm(ptauAB42 ~ Group*EYO + APOE*EYO + Gender*EYO + Group*APOE + Group*Gender + APOE*Gender, data = AllData)
+model8<-lm(SNAP25 ~ Group*EYO + APOE*EYO + Gender*EYO + Group*APOE + Group*Gender + APOE*Gender, data = AllData)
+model9<-lm(VILIP1 ~ Group*EYO + APOE*EYO + Gender*EYO + Group*APOE + Group*Gender + APOE*Gender, data = AllData)
+model10<-lm(YKL40 ~ Group*EYO + APOE*EYO + Gender*EYO + Group*APOE + Group*Gender + APOE*Gender, data = AllData)
+model11<-lm(logLot1NfL ~ Group*EYO + APOE*EYO + Gender*EYO + Group*APOE + Group*Gender + APOE*Gender, data = AllData)
+
+stargazer(model1, model2, model3, model4, model5, model6, model7, model8, model9, model10, model11,
+          type = "html", out = paste(FILEPATH_DATA, "FullModels_3group.htm", sep = ""),
+          #column.labels=c("Amyloid - Centiloids", "Tau - AV1451", "AD Signature Volume", "Intranetwork Rs-fc"),
+          # covariate.labels = c("DS", "DIAN MC", "EYO", "APOE4+", "Sex = Female", "DS*EYO",
+          #                      "MC*EYO", "Intercept"),
+          star.cutoffs = c(0.004545, 0.000909090909, 0.00009090909090909), #Cutoffs are bonf corrected for .05, .01, .001
+          notes = "All group comparisons relative to DIAN non-Mutation Carriers")
+
+#Doing post-hoc testing to better understand interactions
+#F test tells you if variance is the same or different. 
+#Not testing compared to controls because control variance is basically zero for all biomarkers
+var.test(AB40 ~ Group, AllData[AllData$Group == "MC" | AllData$Group == "DS",], alternative = "two.sided") #Different
+var.test(AB42 ~ Group, AllData[AllData$Group == "MC" | AllData$Group == "DS",], alternative = "two.sided")
+var.test(tTau ~ Group, AllData[AllData$Group == "MC" | AllData$Group == "DS",], alternative = "two.sided")
+var.test(pTau ~ Group, AllData[AllData$Group == "MC" | AllData$Group == "DS",], alternative = "two.sided")
+var.test(ABratio ~ Group, AllData[AllData$Group == "MC" | AllData$Group == "DS",], alternative = "two.sided") #Different
+var.test(tauAB42 ~ Group, AllData[AllData$Group == "MC" | AllData$Group == "DS",], alternative = "two.sided") #Different
+var.test(ptauAB42 ~ Group, AllData[AllData$Group == "MC" | AllData$Group == "DS",], alternative = "two.sided") #Different
+var.test(SNAP25 ~ Group, AllData[AllData$Group == "MC" | AllData$Group == "DS",], alternative = "two.sided")
+var.test(VILIP1 ~ Group, AllData[AllData$Group == "MC" | AllData$Group == "DS",], alternative = "two.sided")
+var.test(YKL40 ~ Group, AllData[AllData$Group == "MC" | AllData$Group == "DS",], alternative = "two.sided") #Different
+var.test(logLot1NfL ~ Group, AllData[AllData$Group == "MC" | AllData$Group == "DS",], alternative = "two.sided")
+
+#Statistically different variance between mutation carriers and participants with downs in:
+#AB40, AB42/AB40, tau/AB42, ptau/AB42, and YKL40
+
+#Need to test for statistically significant different slopes. Doing the within group comparisons
+#NC-DS, NC - MC, DS - MC
+tmp<-emtrends(model1, pairwise ~ Group, var = "EYO") 
+p.adjust(data.frame(tmp$contrasts)$p.value, method = "bonferroni",  n = 11) #Bonferroni correcting
+tmp<-emtrends(model2, pairwise ~ Group, var = "EYO") #NC - DS, p < 0.0001, NC - MC p < 0.0001
+p.adjust(data.frame(tmp$contrasts)$p.value, method = "bonferroni",  n = 11) 
+tmp<-emtrends(model3, pairwise ~ Group, var = "EYO") #NC - MC p < 0.0001
+p.adjust(data.frame(tmp$contrasts)$p.value, method = "bonferroni",  n = 11) 
+tmp<-emtrends(model4, pairwise ~ Group, var = "EYO") 
+p.adjust(data.frame(tmp$contrasts)$p.value, method = "bonferroni",  n = 11) #NC - DS p = 0.025, NC - MC p < 0.0001
+tmp<-emtrends(model5, pairwise ~ Group, var = "EYO") #NC - MC p < 0.0001
+p.adjust(data.frame(tmp$contrasts)$p.value, method = "bonferroni",  n = 11) 
+tmp<-emtrends(model6, pairwise ~ Group, var = "EYO") #NC - MC p < 0.0001
+p.adjust(data.frame(tmp$contrasts)$p.value, method = "bonferroni",  n = 11) 
+tmp<-emtrends(model7, pairwise ~ Group, var = "EYO") #NC - MC p < 0.0001
+p.adjust(data.frame(tmp$contrasts)$p.value, method = "bonferroni",  n = 11) 
+tmp<-emtrends(model8, pairwise ~ Group, var = "EYO") 
+p.adjust(data.frame(tmp$contrasts)$p.value, method = "bonferroni",  n = 11) 
+tmp<-emtrends(model9, pairwise ~ Group, var = "EYO") 
+p.adjust(data.frame(tmp$contrasts)$p.value, method = "bonferroni",  n = 11) 
+tmp<-emtrends(model10, pairwise ~ Group, var = "EYO") #NC - DS p = 0.0113
+p.adjust(data.frame(tmp$contrasts)$p.value, method = "bonferroni",  n = 11) 
+tmp<-emtrends(model11, pairwise ~ Group, var = "EYO")  #NC - MC p < 0.0001
+p.adjust(data.frame(tmp$contrasts)$p.value, method = "bonferroni",  n = 11) 
+
+
+#Not significant after bonferroni
+p.adjust(tmp$p.value, method = "bonferroni",  n = 11)
+
+#Significant after bonferroni
+p.adjust(0.0023, method = "bonferroni",  n = 11)
+p.adjust(0.0001, method = "bonferroni",  n = 11)
+
+
+
+#Need to get effect sizes - these are for group differences after correcting for EYO
+#Didn't correct for anything else since there's not really anything else that's significant
+#d=0.2 be considered a 'small' effect size, 0.5 represents a 'medium' effect size and 0.8 a 'large' effect size, 1.4 is huge 
+
+
+EffSize<-data.frame("Biomarker" = NA, "NC_DS" = NA, "NC_MC" = NA, "DS_MC" = NA)
+biomarkers<-c("AB40", "AB42", "tTau", "pTau", "ABratio", "tauAB42", 
+              "ptauAB42", "SNAP25", "VILIP1", "YKL40", "logLot1NfL")
+AllData_Corrected<-AllData
+CORRECT<-function(BIOMARKER, MODEL){
+  CorrectedVal<-ifelse(AllData_Corrected$Group == "NC", AllData_Corrected[,BIOMARKER] - AllData_Corrected$EYO*MODEL[4],
+                       ifelse(AllData_Corrected$Group == "DS", AllData_Corrected[,BIOMARKER] - AllData_Corrected$EYO*(MODEL[4] + MODEL[7]),
+                              AllData_Corrected[,BIOMARKER] - AllData_Corrected$EYO*(MODEL[4] + MODEL[8])))
+  return(CorrectedVal)}
+
+AllData_Corrected$AB40<-CORRECT("AB40", model1$coefficients)
+AllData_Corrected$AB42<-CORRECT("AB42", model2$coefficients)
+AllData_Corrected$tTau<-CORRECT("tTau", model3$coefficients)
+AllData_Corrected$pTau<-CORRECT("pTau", model4$coefficients)
+AllData_Corrected$ABratio<-CORRECT("ABratio", model5$coefficients)
+AllData_Corrected$tauAB42<-CORRECT("tauAB42", model6$coefficients)
+AllData_Corrected$ptauAB42<-CORRECT("ptauAB42", model7$coefficients)
+AllData_Corrected$SNAP25<-CORRECT("SNAP25", model8$coefficients)
+AllData_Corrected$VILIP1<-CORRECT("VILIP1", model9$coefficients)
+AllData_Corrected$YKL40<-CORRECT("YKL40", model10$coefficients)
+AllData_Corrected$logLot1NfL<-CORRECT("logLot1NfL", model11$coefficients)
+
+
+
+for(i in 1:length(biomarkers)){
+  BIOMARKER<-biomarkers[i]
+  EffSize[i, 1]<-BIOMARKER
+  EffSize[i, 2]<-abs((mean(AllData_Corrected[AllData_Corrected$Group == "NC", BIOMARKER], na.rm = TRUE) - 
+                        mean(AllData_Corrected[AllData_Corrected$Group == "DS", BIOMARKER], na.rm = TRUE))/sqrt((sd(AllData_Corrected[AllData_Corrected$Group == "NC", BIOMARKER], na.rm = TRUE)^2 +
+                                                                                                                   sd(AllData_Corrected[AllData_Corrected$Group == "DS", BIOMARKER], na.rm = TRUE)^2)/2))
+  EffSize[i, 3]<-abs((mean(AllData[AllData$Group == "NC", BIOMARKER], na.rm = TRUE) - 
+                        mean(AllData_Corrected[AllData_Corrected$Group == "MC", BIOMARKER], na.rm = TRUE))/sqrt((sd(AllData_Corrected[AllData_Corrected$Group == "NC", BIOMARKER], na.rm = TRUE)^2 +
+                                                                                                                   sd(AllData_Corrected[AllData_Corrected$Group == "MC", BIOMARKER], na.rm = TRUE)^2)/2))
+  EffSize[i, 4]<-abs((mean(AllData_Corrected[AllData_Corrected$Group == "DS", BIOMARKER], na.rm = TRUE) - 
+                        mean(AllData_Corrected[AllData_Corrected$Group == "MC", BIOMARKER], na.rm = TRUE))/sqrt((sd(AllData_Corrected[AllData_Corrected$Group == "DS", BIOMARKER], na.rm = TRUE)^2 +
+                                                                                                                   sd(AllData_Corrected[AllData_Corrected$Group == "MC", BIOMARKER], na.rm = TRUE)^2)/2))}
+
+write.csv(EffSize, paste(FILEPATH_DATA, "EffectSizes.csv", sep = "")) #After correcting for differences in EYO
+
+EffSize
+
+
+###Can do it with the 5 group comparison instead
+#This is a supplemental material
+
+AllData$CogGroup<-relevel(AllData$CogGroup, ref = "NC")
+model1<-lm(AB40 ~ CogGroup*EYO + APOE*EYO + Gender*EYO + CogGroup*APOE + CogGroup*Gender + APOE*Gender, data = AllData)
+model2<-lm(AB42 ~ CogGroup*EYO + APOE*EYO + Gender*EYO + CogGroup*APOE + CogGroup*Gender + APOE*Gender, data = AllData)
+model3<-lm(tTau ~ CogGroup*EYO + APOE*EYO + Gender*EYO + CogGroup*APOE + CogGroup*Gender + APOE*Gender, data = AllData)
+model4<-lm(pTau ~ CogGroup*EYO + APOE*EYO + Gender*EYO + CogGroup*APOE + CogGroup*Gender + APOE*Gender, data = AllData)
+model5<-lm(ABratio ~ CogGroup*EYO + APOE*EYO + Gender*EYO + CogGroup*APOE + CogGroup*Gender + APOE*Gender, data = AllData)
+model6<-lm(tauAB42 ~ CogGroup*EYO + APOE*EYO + Gender*EYO + CogGroup*APOE + CogGroup*Gender + APOE*Gender, data = AllData)
+model7<-lm(ptauAB42 ~ CogGroup*EYO + APOE*EYO + Gender*EYO + CogGroup*APOE + CogGroup*Gender + APOE*Gender, data = AllData)
+model8<-lm(SNAP25 ~ CogGroup*EYO + APOE*EYO + Gender*EYO + CogGroup*APOE + CogGroup*Gender + APOE*Gender, data = AllData)
+model9<-lm(VILIP1 ~ CogGroup*EYO + APOE*EYO + Gender*EYO + CogGroup*APOE + CogGroup*Gender + APOE*Gender, data = AllData)
+model10<-lm(YKL40 ~ CogGroup*EYO + APOE*EYO + Gender*EYO + CogGroup*APOE + CogGroup*Gender + APOE*Gender, data = AllData)
+model11<-lm(logLot1NfL ~ CogGroup*EYO + APOE*EYO + Gender*EYO + CogGroup*APOE + CogGroup*Gender + APOE*Gender, data = AllData)
+
+
+stargazer(model1, model2, model3, model4, model5, model6, model7, model8, model9, model10, model11,
+          type = "html", out = "W:/ances/julie/Data/ABCDS/FullModels_5group.htm",
+          #column.labels=c("Amyloid - Centiloids", "Tau - AV1451", "AD Signature Volume", "Intranetwork Rs-fc"),
+          covariate.labels = c("DS", "DIAN MC", "EYO", "APOE4+", "Sex = Female", "Race = Nonwhite", "Race = Unknown", "DS*EYO",
+                               "MC*EYO", "EYO*APOE", "EYO*Sex", "DS*Sex", "DIAN MC*Sex", "DS*APOE", "DIAN MC*APOE", "Intercept"),
+          star.cutoffs = c(0.004545, 0.000909090909, 0.00009090909090909), 
+          notes = "All group comparisons relative to DIAN non-Mutation Carriers")
+
+
+##############################################################################################################################
+##############################################################################################################################
