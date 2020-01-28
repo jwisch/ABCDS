@@ -1,0 +1,274 @@
+library(ggsignif)
+library(ggpubr)
+library(gridExtra)
+library(agricolae)
+library("ggplot2")
+library("gridExtra")
+library("grid")
+library("tidyr")
+library("ggpubr")
+library("magrittr")
+library("sandwich")
+library("lmtest")
+library("tableone")
+library("multcomp")
+library(yhat)
+FILEPATH<-"C:/Users/julie.wisch/Documents/ABCDS/InProgress_ABCDSAnalysis/Data/"
+RawData <- read.csv(paste(FILEPATH, "NCDSMC_Data.csv", sep = ""))
+RawData$Group <- factor(RawData$Group, levels=c("NC", "DS", "MC"))
+RawData$CogGroup <- factor(RawData$CogGroup, levels=c("NC", "aDS", "sDS", "aMC", "sMC"))
+RawData$APOE <- factor(RawData$APOE, levels = c(0, 1))
+layout<-rbind(c(1, 1, 2), c(1, 1, 3))  
+AllData <- RawData[,2:21]
+
+
+listVars<-c("Gender", "APOE", "Age", "EYO", "CDRglob", "AB40", "AB42", "tTau", "pTau", "ABratio", "tauAB42", 
+            "ptauAB42", "SNAP25", "VILIP1", "YKL40", "logLot1NfL")
+
+
+Tukeylist<-list()
+listVars<-listVars[6:16]
+for(i in 1:length(listVars)){
+  av <- aov(lm(AllData[,listVars[i]] ~ Group*EYO + APOE, data = AllData))
+  hold<-HSD.test(av, trt = 'Group', group = FALSE)
+  hold<-data.frame(hold$comparison)
+  #colnames(hold)[1]<-"Comparison"
+  hold$Param<-as.character(listVars[i])
+  Tukeylist[[i]]<-hold
+}
+
+TukeyResult<-do.call(rbind, Tukeylist)
+
+Tukeylist_5<-list()
+for(i in 1:length(listVars)){
+  av <- aov(lm(AllData[,listVars[i]] ~ CogGroup*EYO + APOE, data = AllData))
+  hold<-HSD.test(av, trt = 'CogGroup', group = FALSE)
+  hold<-data.frame(hold$comparison)
+  #colnames(hold)[1]<-"Comparison"
+  hold$Param<-as.character(listVars[i])
+  Tukeylist_5[[i]]<-hold
+}
+
+TukeyResult_5<-do.call(rbind, Tukeylist_5)
+DSdata<-AllData[AllData$Group == "DS",]
+MCdata<-AllData[AllData$Group == "MC",]
+
+BoxPlot<-function(DF, GROUP, ANNOTATION_DF, BIOMARKER, COLORS){
+  p<-ggplot(DF, aes_string(x=GROUP, y=BIOMARKER)) +  
+    geom_boxplot(aes_string(fill = GROUP), alpha = 0.8, outlier.shape = NA) + geom_point(aes_string(fill = GROUP), size = 1, shape = 21, position = position_jitterdodge()) +
+    theme(legend.position = "none", panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+          panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+    xlab("") +  scale_fill_manual(values = COLORS) #+
+    #geom_signif(data = ANNOTATION_DF, aes(xmin = xstart, xmax = xend, annotations = annotation, y_position = y), manual = TRUE) 
+  return(p)
+}
+
+GeneratePlot<-function(MODEL, BIOMARKER){
+  fakedata<-data.frame("Group" = c(rep("NC", 114), rep("DS", 114), rep("MC", 114)), "EYO" = rep(seq(from = -30, to = 20, length.out = 114), 3),
+                       "APOE" = as.factor(rep(0, 342)))
+  fakedata$Group<-factor(fakedata$Group, levels = levels(AllData$Group))
+  AllData$APOE<-as.factor(AllData$APOE)
+  hold<-predict(MODEL, fakedata, interval = "confidence")
+  fakedata<-data.frame(cbind(fakedata, hold))
+  p<-ggplot(fakedata, aes(x = EYO, group = Group, colour = Group, shape = Group)) + 
+    labs(colour = "Group", shape = "Group") +
+    geom_line(data = fakedata, aes(x = EYO, y = fit, group = Group, colour = Group), linetype = "solid") +
+    geom_line(data = fakedata, aes(x = EYO, y = lwr, group = Group, colour = Group), linetype = "dashed") + 
+    geom_line(data = fakedata,aes(x = EYO, y = upr, group = Group, colour = Group), linetype = "dashed") +
+    geom_ribbon(data = fakedata, aes(ymin = lwr, ymax = upr, fill = Group), alpha = 0.15, guide = FALSE) +
+    geom_point(data = AllData, aes_string(x = "EYO", y = BIOMARKER, group = "Group", colour = "Group", shape = "Group")) +
+    scale_fill_manual(values = c("grey37", "#a6611a", "#018571"), guide = FALSE) +
+    scale_colour_manual(values = c("grey37", "#a6611a", "#018571")) +
+    scale_shape_manual(values = c(1, 3, 4)) +
+    scale_x_continuous(breaks=c(-30, 0, 20)) +
+    theme(legend.position = "bottom", panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+          panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+    ylab(BIOMARKER) 
+  return(p)
+  
+}
+
+
+#So I had to manually apply each of the stars
+#Super painstaking
+#Just pull the signficance levels from the regression table and then manually type them into the annotation dataframe
+annotation_df<-data.frame(xstart = c(1, 1, 2), xend = c(2, 3, 3),
+                          y = c(22000, 24000, 20000), annotation=c("***", "NS", " ***"))
+annotation_DS<-data.frame(xstart = 1, xend = 2, y = 23500, annotation = "NS")
+annotation_MC<-data.frame(xstart = 1, xend = 2, y = 23500, annotation = "NS")
+
+p1_AB40<-BoxPlot(AllData, "Group", annotation_df, "AB40", c("grey37", "#a6611a", "#018571"))
+p2_AB40<-BoxPlot(DSdata, "CogGroup", annotation_DS, "AB40", c("#a6611a", "#dfc27d"))
+p3_AB40<-BoxPlot(MCdata, "CogGroup", annotation_MC, "AB40", c("#018571","#80cdc1"))
+
+#1, 2 = NC, DS
+#1, 3 = NC, MC
+#2, 3 = DS, MC
+TukeyResult_5[TukeyResult_5$Param == "AB42",]
+annotation_df<-data.frame(xstart = c(1, 1, 2), xend = c(2, 3, 3),
+                          y = c(1800, 2000, 1700), annotation=c("NS", "***", " ***"))
+annotation_DS<-data.frame(xstart = 1, xend = 2, y = 2000, annotation = "**")
+annotation_MC<-data.frame(xstart = 1, xend = 2, y = 2000, annotation = "***")
+
+p1_AB42<-BoxPlot(AllData, "Group", annotation_df, "AB42", c("grey37", "#a6611a", "#018571"))
+p2_AB42<-BoxPlot(DSdata, "CogGroup", annotation_DS, "AB42", c("#a6611a", "#dfc27d"))
+p3_AB42<-BoxPlot(MCdata, "CogGroup", annotation_MC, "AB42", c("#018571","#80cdc1"))
+
+#1, 2 = NC, DS
+#1, 3 = NC, MC
+#2, 3 = DS, MC
+TukeyResult[TukeyResult$Param == "tTau",]
+TukeyResult_5[TukeyResult_5$Param == "tTau",]
+annotation_df<-data.frame(xstart = c(1, 1, 2), xend = c(2, 3, 3),
+                          y = c(1800, 2000, 1700), annotation=c(" ***", "***", "NS"))
+annotation_DS<-data.frame(xstart = 1, xend = 2, y = 2000, annotation = "NS")
+annotation_MC<-data.frame(xstart = 1, xend = 2, y = 2000, annotation = "***")
+
+p1_tTau<-BoxPlot(AllData, "Group", annotation_df, "tTau", c("grey37", "#a6611a", "#018571"))
+p2_tTau<-BoxPlot(DSdata, "CogGroup", annotation_DS, "tTau", c("#a6611a", "#dfc27d"))
+p3_tTau<-BoxPlot(MCdata, "CogGroup", annotation_MC, "tTau", c("#018571","#80cdc1"))
+
+
+#1, 2 = NC, DS
+#1, 3 = NC, MC
+#2, 3 = DS, MC
+TukeyResult[TukeyResult$Param == "pTau",]
+TukeyResult_5[TukeyResult_5$Param == "pTau",]
+annotation_df<-data.frame(xstart = c(1, 1, 2), xend = c(2, 3, 3),
+                          y = c(380, 400, 360), annotation=c(" ***", "***", "NS"))
+annotation_DS<-data.frame(xstart = 1, xend = 2, y = 380, annotation = "**")
+annotation_MC<-data.frame(xstart = 1, xend = 2, y = 380, annotation = "***")
+
+p1_pTau<-BoxPlot(AllData, "Group", annotation_df, "pTau", c("grey37", "#a6611a", "#018571"))
+p2_pTau<-BoxPlot(DSdata, "CogGroup", annotation_DS, "pTau", c("#a6611a", "#dfc27d"))
+p3_pTau<-BoxPlot(MCdata, "CogGroup", annotation_MC, "pTau", c("#018571","#80cdc1"))
+
+
+#1, 2 = NC, DS
+#1, 3 = NC, MC
+#2, 3 = DS, MC
+TukeyResult[TukeyResult$Param == "ABratio",]
+TukeyResult_5[TukeyResult_5$Param == "ABratio",]
+annotation_df<-data.frame(xstart = c(1, 1, 2), xend = c(2, 3, 3),
+                          y = c(0.18,0.22, 0.2), annotation=c(" ***", "***", "NS"))
+annotation_DS<-data.frame(xstart = 1, xend = 2, y = 0.12, annotation = "NS")
+annotation_MC<-data.frame(xstart = 1, xend = 2, y = 0.22, annotation = "***")
+
+p1_ABratio<-BoxPlot(AllData, "Group", annotation_df, "ABratio", c("grey37", "#a6611a", "#018571"))
+p2_ABratio<-BoxPlot(DSdata, "CogGroup", annotation_DS, "ABratio", c("#a6611a", "#dfc27d"))
+p3_ABratio<-BoxPlot(MCdata, "CogGroup", annotation_MC, "ABratio", c("#018571","#80cdc1"))
+
+#1, 2 = NC, DS
+#1, 3 = NC, MC
+#2, 3 = DS, MC
+TukeyResult[TukeyResult$Param == "tauAB42",]
+TukeyResult_5[TukeyResult_5$Param == "tauAB42",]
+annotation_df<-data.frame(xstart = c(1, 1, 2), xend = c(2, 3, 3),
+                          y = c(5.5,6, 5.7), annotation=c("**", " ***", "***"))
+annotation_DS<-data.frame(xstart = 1, xend = 2, y = 3, annotation = "NS")
+annotation_MC<-data.frame(xstart = 1, xend = 2, y = 6, annotation = "***")
+
+p1_tauAB42<-BoxPlot(AllData, "Group", annotation_df, "tauAB42", c("grey37", "#a6611a", "#018571"))
+p2_tauAB42<-BoxPlot(DSdata, "CogGroup", annotation_DS, "tauAB42", c("#a6611a", "#dfc27d"))
+p3_tauAB42<-BoxPlot(MCdata, "CogGroup", annotation_MC, "tauAB42", c("#018571","#80cdc1"))
+
+#1, 2 = NC, DS
+#1, 3 = NC, MC
+#2, 3 = DS, MC
+TukeyResult[TukeyResult$Param == "ptauAB42",]
+TukeyResult_5[TukeyResult_5$Param == "ptauAB42",]
+annotation_df<-data.frame(xstart = c(1, 1, 2), xend = c(2, 3, 3),
+                          y = c(0.8,1.2, 1), annotation=c("**", " ***", "***"))
+annotation_DS<-data.frame(xstart = 1, xend = 2, y = 0.8, annotation = "*")
+annotation_MC<-data.frame(xstart = 1, xend = 2, y = 0.99, annotation = "***")
+
+p1_ptauAB42<-BoxPlot(AllData, "Group", annotation_df, "ptauAB42", c("grey37", "#a6611a", "#018571"))
+p2_ptauAB42<-BoxPlot(DSdata, "CogGroup", annotation_DS, "ptauAB42", c("#a6611a", "#dfc27d"))
+p3_ptauAB42<-BoxPlot(MCdata, "CogGroup", annotation_MC, "ptauAB42", c("#018571","#80cdc1"))
+
+#1, 2 = NC, DS
+#1, 3 = NC, MC
+#2, 3 = DS, MC
+TukeyResult[TukeyResult$Param == "SNAP25",]
+TukeyResult_5[TukeyResult_5$Param == "SNAP25",]
+annotation_df<-data.frame(xstart = c(1, 1, 2), xend = c(2, 3, 3),
+                          y = c(8,12, 10), annotation=c(".", " ***", "NS"))
+annotation_DS<-data.frame(xstart = 1, xend = 2, y = 8, annotation = "NS")
+annotation_MC<-data.frame(xstart = 1, xend = 2, y = 11.5, annotation = "***")
+
+p1_SNAP25<-BoxPlot(AllData, "Group", annotation_df, "SNAP25", c("grey37", "#a6611a", "#018571"))
+p2_SNAP25<-BoxPlot(DSdata, "CogGroup", annotation_DS, "SNAP25", c("#a6611a", "#dfc27d"))
+p3_SNAP25<-BoxPlot(MCdata, "CogGroup", annotation_MC, "SNAP25", c("#018571","#80cdc1"))
+
+#1, 2 = NC, DS
+#1, 3 = NC, MC
+#2, 3 = DS, MC
+TukeyResult[TukeyResult$Param == "VILIP1",]
+TukeyResult_5[TukeyResult_5$Param == "VILIP1",]
+annotation_df<-data.frame(xstart = c(1, 1, 2), xend = c(2, 3, 3),
+                          y = c(460,500, 480), annotation=c("***", " ***", "NS"))
+annotation_DS<-data.frame(xstart = 1, xend = 2, y = 460, annotation = "NS")
+annotation_MC<-data.frame(xstart = 1, xend = 2, y = 460, annotation = "***")
+
+p1_VILIP1<-BoxPlot(AllData, "Group", annotation_df, "VILIP1", c("grey37", "#a6611a", "#018571"))
+p2_VILIP1<-BoxPlot(DSdata, "CogGroup", annotation_DS, "VILIP1", c("#a6611a", "#dfc27d"))
+p3_VILIP1<-BoxPlot(MCdata, "CogGroup", annotation_MC, "VILIP1", c("#018571","#80cdc1"))
+
+
+#1, 2 = NC, DS
+#1, 3 = NC, MC
+#2, 3 = DS, MC
+TukeyResult[TukeyResult$Param == "YKL40",]
+TukeyResult_5[TukeyResult_5$Param == "YKL40",]
+annotation_df<-data.frame(xstart = c(1, 1, 2), xend = c(2, 3, 3),
+                          y = c(460,530, 490), annotation=c("***", " ***", "*** "))
+annotation_DS<-data.frame(xstart = 1, xend = 2, y = 500, annotation = "*")
+annotation_MC<-data.frame(xstart = 1, xend = 2, y = 460, annotation = "***")
+
+p1_YKL40<-BoxPlot(AllData, "Group", annotation_df, "YKL40", c("grey37", "#a6611a", "#018571"))
+p2_YKL40<-BoxPlot(DSdata, "CogGroup", annotation_DS, "YKL40", c("#a6611a", "#dfc27d"))
+p3_YKL40<-BoxPlot(MCdata, "CogGroup", annotation_MC, "YKL40", c("#018571","#80cdc1"))
+
+#1, 2 = NC, DS
+#1, 3 = NC, MC
+#2, 3 = DS, MC
+TukeyResult[TukeyResult$Param == "logLot1NfL",]
+TukeyResult_5[TukeyResult_5$Param == "logLot1NfL",]
+annotation_df<-data.frame(xstart = c(1, 1, 2), xend = c(2, 3, 3),
+                          y = c(3.6,4, 3.8), annotation=c("***", " ***", "*** "))
+annotation_DS<-data.frame(xstart = 1, xend = 2, y = 3.8, annotation = "**")
+annotation_MC<-data.frame(xstart = 1, xend = 2, y = 3.8, annotation = "***")
+
+p1_logLot1NfL<-BoxPlot(AllData, "Group", annotation_df, "logLot1NfL", c("grey37", "#a6611a", "#018571"))
+p2_logLot1NfL<-BoxPlot(DSdata, "CogGroup", annotation_DS, "logLot1NfL", c("#a6611a", "#dfc27d"))
+p3_logLot1NfL<-BoxPlot(MCdata, "CogGroup", annotation_MC, "logLot1NfL", c("#018571","#80cdc1"))
+
+#Produces a PDF of all the figures we want to make
+pdf(paste(FILEPATH, "ScatterPlots.pdf", sep = ""), width = 8, height = 6)
+
+grid.arrange(p1_AB40, p2_AB40, p3_AB40, layout_matrix = layout)  
+grid.arrange(p1_AB42, p2_AB42, p3_AB42, layout_matrix = layout)  
+grid.arrange(p1_tTau, p2_tTau, p3_tTau, layout_matrix = layout)  
+grid.arrange(p1_pTau, p2_pTau, p3_pTau, layout_matrix = layout)  
+grid.arrange(p1_ABratio, p2_ABratio, p3_ABratio, layout_matrix = layout)  
+grid.arrange(p1_tauAB42, p2_tauAB42, p3_tauAB42, layout_matrix = layout)  
+grid.arrange(p1_ptauAB42, p2_ptauAB42, p3_ptauAB42, layout_matrix = layout)  
+grid.arrange(p1_SNAP25, p2_SNAP25, p3_SNAP25, layout_matrix = layout)  
+grid.arrange(p1_VILIP1, p2_VILIP1, p3_VILIP1, layout_matrix = layout)  
+grid.arrange(p1_YKL40, p2_YKL40, p3_YKL40, layout_matrix = layout)  
+grid.arrange(p1_logLot1NfL, p2_logLot1NfL, p3_logLot1NfL, layout_matrix = layout)  
+
+GeneratePlot(lm(AB40 ~ Group*EYO + APOE - 1, data = AllData), "AB40") 
+GeneratePlot(lm(AB42 ~ Group*EYO + APOE - 1, data = AllData), "AB42")
+GeneratePlot(lm(tTau ~ Group*EYO + APOE - 1, data = AllData), "tTau")
+GeneratePlot(lm(pTau ~ Group*EYO + APOE - 1, data = AllData), "pTau")
+GeneratePlot(lm(ABratio ~ Group*EYO + APOE - 1, data = AllData), "ABratio")
+GeneratePlot(lm(tauAB42 ~ Group*EYO + APOE - 1, data = AllData), "tauAB42")
+GeneratePlot(lm(ptauAB42 ~ Group*EYO + APOE - 1, data = AllData), "ptauAB42")
+GeneratePlot(lm(SNAP25 ~ Group*EYO + APOE - 1, data = AllData), "SNAP25")
+GeneratePlot(lm(VILIP1 ~ Group*EYO + APOE - 1, data = AllData), "VILIP1")
+GeneratePlot(lm(YKL40 ~ Group*EYO + APOE - 1, data = AllData), "YKL40")
+GeneratePlot(lm(logLot1NfL ~ Group*EYO + APOE - 1, data = AllData), "logLot1NfL")
+
+dev.off()
+
